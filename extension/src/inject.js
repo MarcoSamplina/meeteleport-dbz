@@ -80,7 +80,7 @@
     const api = {};
     Object.defineProperties(api, {
       installed: { value: true },
-      version: { value: '0.3.1' },
+      version: { value: '0.3.2' },
       supportsInsertable: { get: supportsInsertable },
       frames: { get: () => state.frames },
       mode: { get: () => state.mode },
@@ -295,18 +295,36 @@
     return state.effect !== null || roomState.vanished !== before;
   }
 
-  // El corte del anime: sube a blanco, cambia el cuadro en el pico y el blanco cae.
+  const plate = document.createElement('canvas');
+  const plateCtx = plate.getContext('2d', { alpha: false });
+  const SWITCH_AT = 280;
+  const EFFECT_MS = 700;
+
+  // Copia lo que se va (tú, o la habitación) para estirarlo en planos verticales.
+  function rememberPlate(liveSource, width, height) {
+    const effect = state.effect;
+    if (!effect || effect.plate || !plateCtx || !width || !height) return;
+    if (plate.width !== width || plate.height !== height) {
+      plate.width = width;
+      plate.height = height;
+    }
+    if (roomState.vanished && roomState.bitmap) plateCtx.drawImage(roomState.bitmap, 0, 0, width, height);
+    else if (liveSource) plateCtx.drawImage(liveSource, 0, 0, width, height);
+    else return;
+    effect.plate = true;
+  }
+
   function tickEffect() {
     const effect = state.effect;
     if (!effect) return -1;
     const t = performance.now() - effect.start;
-    if (t >= 140 && !effect.switched) {
+    if (t >= SWITCH_AT && !effect.switched) {
       effect.switched = true;
       roomState.vanished = effect.to;
       log(effect.to ? 'fuera de cuadro' : 'de vuelta en cuadro');
       publish();
     }
-    if (t >= 380) {
+    if (t >= EFFECT_MS) {
       state.effect = null;
       publish();
       return -1;
@@ -315,32 +333,40 @@
   }
 
   function drawTeleport(ctx, width, height, t) {
-    if (t < 0) return;
-    const rise = t < 140;
-    const alpha = rise
-      ? Math.pow(t / 140, 1.35) * 0.97
-      : Math.max(0, 1 - (t - 140) / 180) * 0.97;
-    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-    ctx.fillRect(0, 0, width, height);
-    const life = Math.max(0, 1 - t / 340);
-    const radius = width * (0.05 + Math.min(1, t / 300) * 0.7);
-    ctx.beginPath();
-    ctx.arc(width / 2, height * 0.34, radius, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(186, 246, 255, ${0.9 * life})`;
-    ctx.lineWidth = Math.max(2, width * 0.014 * (0.4 + life));
-    ctx.stroke();
-    if (t > 70 && t < 230) {
-      const streak = 1 - Math.abs(t - 140) / 90;
-      ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, streak) * 0.7})`;
-      ctx.lineWidth = Math.max(1, height * 0.008);
-      const y = height * 0.34;
+    if (t < 0 || !state.effect?.plate) return;
+    const leaving = t < SWITCH_AT;
+    const alpha = leaving
+      ? Math.min(1, t / 120)
+      : Math.max(0, 1 - (t - SWITCH_AT) / (EFFECT_MS - SWITCH_AT));
+    if (alpha <= 0.02) return;
+    const p = Math.min(1, t / SWITCH_AT);
+    const strips = Math.min(84, Math.max(32, Math.floor(width / 8)));
+    const stretch = 1 + Math.pow(p, 1.05) * 6;
+    const travel = height * Math.pow(p, 1.05) * 0.62;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    for (let i = 0; i < strips; i += 1) {
+      const slice = width / strips;
+      const sx = Math.floor(i * slice);
+      const sw = Math.max(1, Math.ceil(slice));
+      const dir = i % 2 ? 1 : -1;
+      const wobble = Math.sin(i * 1.9) * height * 0.06 * p;
+      const destH = height * stretch;
+      const destY = (height - destH) / 2 + dir * travel + wobble;
+      ctx.drawImage(plate, sx, 0, sw, height, sx, destY, sw, destH);
+    }
+    ctx.strokeStyle = `rgba(10, 8, 14, ${0.55 * alpha})`;
+    ctx.lineWidth = 1;
+    const lines = Math.floor(strips * 0.65);
+    for (let i = 0; i < lines; i += 1) {
+      const x = (i + 0.5) * width / lines;
+      ctx.globalAlpha = alpha * (0.25 + (i % 3) * 0.2);
       ctx.beginPath();
-      ctx.moveTo(width * 0.08, y);
-      ctx.lineTo(width * 0.92, y);
-      ctx.moveTo(width * 0.18, y - height * 0.06);
-      ctx.lineTo(width * 0.82, y - height * 0.06);
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
       ctx.stroke();
     }
+    ctx.restore();
   }
 
   const sampleCanvas = document.createElement('canvas');
@@ -463,6 +489,7 @@
             const width = value.displayWidth || value.codedWidth;
             const height = value.displayHeight || value.codedHeight;
             const timestamp = Number.isFinite(value.timestamp) ? value.timestamp : performance.now() * 1000;
+            if (state.effect) rememberPlate(value, width, height);
             const effectT = tickEffect();
             if ((roomState.vanished && roomState.bitmap) || effectT >= 0) {
               let stamped = null;
@@ -558,6 +585,7 @@
         }).catch((err) => pending.finish(err));
       }
       maybeSample(video);
+      if (state.effect) rememberPlate(video, width, height);
       if (roomState.vanished && roomState.bitmap) {
         ctx.drawImage(roomState.bitmap, 0, 0, width, height);
       } else {
