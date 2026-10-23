@@ -1,0 +1,57 @@
+:root {
+  color-scheme: light;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: #1c1915;
+  background: #f4f1ea;
+}
+
+body {
+  margin: 0;
+  width: 320px;
+}
+
+main {
+  padding: 16px 16px 14px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #0f766e;
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+p {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+ol {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+li + li {
+  margin-top: 6px;
+}
+
+a {
+  color: #0f766e;
+}
+
+.note {
+  margin-top: 12px;
+  color: #5c564e;
+  font-size: 12px;
+}

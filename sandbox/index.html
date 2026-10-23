@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Banco de pruebas · Meet Teleport</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      color: #1c1915;
+      background: #f4f1ea;
+    }
+    body { margin: 0; }
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 28px 24px 48px;
+    }
+    .eyebrow {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #0f766e;
+    }
+    h1 {
+      margin: 6px 0 0;
+      font-size: 36px;
+      letter-spacing: -0.03em;
+      font-weight: 650;
+    }
+    .lead {
+      max-width: 62ch;
+      margin: 10px 0 0;
+      line-height: 1.5;
+    }
+    .stage {
+      margin-top: 22px;
+      background: #14181a;
+      border-radius: 16px;
+      padding: 12px;
+    }
+    video {
+      display: block;
+      width: 100%;
+      max-height: 420px;
+      background: #000;
+      border-radius: 10px;
+    }
+    .caption {
+      margin: 8px 4px 2px;
+      color: #c9d4d4;
+      font-size: 13px;
+    }
+    ol { margin: 22px 0 0; padding-left: 20px; line-height: 1.45; }
+    li { margin: 6px 0; }
+    li[data-state="pass"] { color: #0f7a45; }
+    li[data-state="fail"] { color: #a3262a; }
+    li[data-state="pending"] { color: #6b645c; }
+    #result {
+      margin: 18px 0 0;
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    #result[data-status="pass"] { color: #0f7a45; }
+    #result[data-status="fail"] { color: #a3262a; }
+    button {
+      margin-top: 16px;
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: #1c1915;
+      color: #f4f1ea;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.45; cursor: default; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Fase 1</p>
+    <h1>Tubo de cámara</h1>
+    <p class="lead">Esta página pide la cámara como lo haría Meet. Si la extensión está cargada, la imagen pasa por ella, puede congelarse en una foto y volver a moverse. El cuadrado cian solo existe aquí.</p>
+    <section class="stage">
+      <video id="preview" autoplay muted playsinline></video>
+      <p class="caption" id="caption">Todavía no hay imagen.</p>
+    </section>
+    <ol id="checks"></ol>
+    <p id="result" role="status" data-status="pending">Preparando la prueba…</p>
+    <button id="retry" type="button" disabled>Repetir prueba</button>
+  </main>
+  <script src="test.js"></script>
+</body>
+</html>
