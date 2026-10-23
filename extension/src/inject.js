@@ -11,6 +11,18 @@
     lastError: '',
     logs: [],
     marker: false,
+    flashUntil: 0,
+  };
+  const gesture = {
+    enabled: true,
+    pending: false,
+    seen: 0,
+    nextId: 1,
+    progress: 0,
+    hand: false,
+    face: false,
+    lastSample: 0,
+    hold: null,
   };
   const roomState = {
     bitmap: null,
@@ -59,6 +71,8 @@
     root.dataset.meeteleportError = state.lastError;
     root.dataset.meeteleportVanished = roomState.vanished ? '1' : '0';
     root.dataset.meeteleportRoom = roomState.bitmap ? '1' : '0';
+    root.dataset.meeteleportGesture = gesture.enabled ? '1' : '0';
+    root.dataset.meeteleportCharge = String(Math.round(gesture.progress * 100));
   }
 
   function publishApi() {
@@ -66,7 +80,7 @@
     const api = {};
     Object.defineProperties(api, {
       installed: { value: true },
-      version: { value: '0.2.0' },
+      version: { value: '0.3.0' },
       supportsInsertable: { get: supportsInsertable },
       frames: { get: () => state.frames },
       mode: { get: () => state.mode },
@@ -81,6 +95,7 @@
       captureRoom: { value: captureRoom },
       setVanished: { value: setVanished },
       toggleVanished: { value: toggleVanished },
+      setGesture: { value: setGesture },
     });
     window.__meeteleport = Object.freeze(api);
   }
@@ -253,6 +268,135 @@
     img.src = image;
   }
 
+  function setGesture(on) {
+    gesture.enabled = Boolean(on);
+    if (!gesture.enabled) gesture.progress = 0;
+    publish();
+    return gesture.enabled;
+  }
+
+  function holdGate() {
+    if (!gesture.hold && globalThis.MeetTeleportGesture) {
+      gesture.hold = globalThis.MeetTeleportGesture.createHold();
+    }
+    return gesture.hold;
+  }
+
+  function teleport() {
+    if (!roomState.bitmap) return false;
+    state.flashUntil = performance.now() + 320;
+    const gone = toggleVanished();
+    log(gone ? 'teletransporte' : 'de vuelta');
+    publish();
+    return true;
+  }
+
+  function flashStrength() {
+    if (!state.flashUntil) return 0;
+    const left = state.flashUntil - performance.now();
+    if (left <= 0) {
+      state.flashUntil = 0;
+      return 0;
+    }
+    return Math.sin((1 - left / 320) * Math.PI) * 0.72;
+  }
+
+  function drawFlash(ctx, width, height) {
+    const alpha = flashStrength();
+    if (alpha <= 0) return;
+    const glow = ctx.createRadialGradient(width / 2, height * 0.28, 8, width / 2, height * 0.34, width * 0.58);
+    glow.addColorStop(0, `rgba(255,255,255,${alpha})`);
+    glow.addColorStop(0.4, `rgba(125,240,255,${alpha * 0.8})`);
+    glow.addColorStop(1, 'rgba(125,240,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  const sampleCanvas = document.createElement('canvas');
+  const sampleCtx = sampleCanvas.getContext('2d', { alpha: false });
+
+  function maybeSample(source) {
+    if (!gesture.enabled || !roomState.bitmap || gesture.pending || document.hidden) return;
+    const now = performance.now();
+    if (now - gesture.lastSample < 170) return;
+    const width = source.displayWidth || source.videoWidth || source.width;
+    const height = source.displayHeight || source.videoHeight || source.height;
+    if (!width || !height || !sampleCtx) return;
+    const targetW = 320;
+    const targetH = Math.max(1, Math.round(height * (targetW / width)));
+    if (sampleCanvas.width !== targetW || sampleCanvas.height !== targetH) {
+      sampleCanvas.width = targetW;
+      sampleCanvas.height = targetH;
+    }
+    try {
+      sampleCtx.drawImage(source, 0, 0, targetW, targetH);
+    } catch {
+      return;
+    }
+    gesture.lastSample = now;
+    gesture.pending = true;
+    const id = gesture.nextId;
+    gesture.nextId += 1;
+    const timer = setTimeout(() => {
+      if (gesture.seen < id) gesture.pending = false;
+    }, 4000);
+    sampleCanvas.toBlob((blob) => {
+      if (!blob) {
+        clearTimeout(timer);
+        gesture.pending = false;
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        window.postMessage({
+          type: BRIDGE,
+          action: 'GESTURE_FRAME',
+          id,
+          image: reader.result,
+        }, location.origin);
+      };
+      reader.readAsDataURL(blob);
+    }, 'image/jpeg', 0.62);
+  }
+
+  function noteGesture(data) {
+    if (!data || !Number.isInteger(data.id) || data.id <= gesture.seen) return;
+    gesture.seen = data.id;
+    gesture.pending = false;
+    gesture.hand = data.hand === true;
+    gesture.face = data.face === true;
+    if (data.skipped) {
+      publish();
+      return;
+    }
+    const gate = holdGate();
+    if (!gate || data.ok === false) {
+      publish();
+      return;
+    }
+    const update = gate.update(data.gesture === true && !data.skipped, performance.now());
+    gesture.progress = update.progress;
+    publish();
+    if (update.triggered) teleport();
+  }
+
+  function outgoingFrame(source, timestamp, width, height) {
+    if (!paintCtx) throw new Error('sin lienzo');
+    if (paint.width !== width || paint.height !== height) {
+      paint.width = width;
+      paint.height = height;
+    }
+    if (source === 'room') paintCtx.drawImage(roomState.bitmap, 0, 0, width, height);
+    else paintCtx.drawImage(source, 0, 0, width, height);
+    drawFlash(paintCtx, width, height);
+    const stamped = Math.round(timestamp);
+    try {
+      return new VideoFrame(paint, { timestamp: stamped, alpha: 'discard' });
+    } catch {
+      return new VideoFrame(paint, { timestamp: stamped });
+    }
+  }
+
   function pipeInsertable(track) {
     const processor = new MediaStreamTrackProcessor({ track });
     const generator = new MediaStreamTrackGenerator({ kind: 'video' });
@@ -279,21 +423,23 @@
             break;
           }
           try {
+            maybeSample(value);
             await takePendingRoom(value);
             if (!running || generator.readyState !== 'live') {
               value.close();
               break;
             }
-            if (roomState.vanished && roomState.bitmap) {
+            const width = value.displayWidth || value.codedWidth;
+            const height = value.displayHeight || value.codedHeight;
+            const timestamp = Number.isFinite(value.timestamp) ? value.timestamp : performance.now() * 1000;
+            const flash = flashStrength();
+            if ((roomState.vanished && roomState.bitmap) || flash > 0) {
               let stamped = null;
               try {
-                const width = value.displayWidth || value.codedWidth;
-                const height = value.displayHeight || value.codedHeight;
-                const timestamp = Number.isFinite(value.timestamp) ? value.timestamp : performance.now() * 1000;
-                stamped = paintRoom(timestamp, width, height);
+                stamped = outgoingFrame(roomState.vanished && roomState.bitmap ? 'room' : value, timestamp, width, height);
               } catch (err) {
                 state.lastError = message(err);
-                log('no pude pintar la habitación: ' + state.lastError);
+                log('no pude componer el frame: ' + state.lastError);
               }
               if (stamped) {
                 value.close();
@@ -380,6 +526,7 @@
           rememberRoom();
         }).catch((err) => pending.finish(err));
       }
+      maybeSample(video);
       if (roomState.vanished && roomState.bitmap) {
         ctx.drawImage(roomState.bitmap, 0, 0, width, height);
       } else {
@@ -389,6 +536,7 @@
           ctx.fillRect(0, 0, 24, 24);
         }
       }
+      drawFlash(ctx, width, height);
       state.frames += 1;
     }
 
@@ -487,7 +635,11 @@
     if (event.source !== window || event.origin !== location.origin) return;
     const data = event.data;
     if (!data || data.type !== BRIDGE) return;
-    if (data.action === 'CAPTURE') {
+    if (data.action === 'GESTURE') {
+      setGesture(!gesture.enabled);
+    } else if (data.action === 'GESTURE_RESULT') {
+      noteGesture(data);
+    } else if (data.action === 'CAPTURE') {
       captureRoom().catch((err) => {
         state.lastError = message(err);
         log(state.lastError);

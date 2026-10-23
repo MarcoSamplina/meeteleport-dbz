@@ -140,6 +140,7 @@
     await waitUntil('la extensión no está cargada en esta página', () => window.__meeteleport?.installed, 2000);
     const api = window.__meeteleport;
     hook.pass(api.supportsInsertable ? 'tubo directo disponible' : 'este Chrome solo tiene canvas');
+    if (typeof api.setGesture === 'function') api.setGesture(false);
     report.supportsInsertable = api.supportsInsertable;
 
     try {

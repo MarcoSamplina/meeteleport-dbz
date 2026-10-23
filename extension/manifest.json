@@ -1,10 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Meet Teleport",
-  "version": "0.2.0",
-  "description": "Sustituye tu cámara en Google Meet por una foto de la habitación vacía.",
-  "minimum_chrome_version": "114",
-  "permissions": ["storage"],
+  "version": "0.3.0",
+  "description": "Desaparece de Google Meet con dos dedos en la frente. La llamada ve tu habitación vacía.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "offscreen"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "background": {
     "service_worker": "src/background.js"
   },
@@ -36,7 +39,7 @@
         "http://127.0.0.1:8765/*",
         "http://localhost:8765/*"
       ],
-      "js": ["src/inject.js"],
+      "js": ["src/gesture-rules.js", "src/inject.js"],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true

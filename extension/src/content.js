@@ -51,6 +51,7 @@
       cursor: pointer;
     }
     button:disabled { opacity: 0.45; cursor: default; }
+    button.on { background: #0f766e; }
   `;
   const pill = document.createElement('div');
   pill.className = 'pill';
@@ -67,7 +68,12 @@
   toggleBtn.type = 'button';
   toggleBtn.textContent = 'Desaparecer';
   toggleBtn.disabled = true;
-  pill.append(dot, label, captureBtn, toggleBtn);
+  const gestureBtn = document.createElement('button');
+  gestureBtn.type = 'button';
+  gestureBtn.textContent = 'Gesto';
+  gestureBtn.className = 'on';
+  gestureBtn.title = 'Dos dedos juntos en la frente';
+  pill.append(dot, label, captureBtn, toggleBtn, gestureBtn);
   shadow.append(style, pill);
 
   const BRIDGE = 'MEETELEPORT_V1';
@@ -98,11 +104,25 @@
     post('CAPTURE');
   });
   toggleBtn.addEventListener('click', () => post('TOGGLE'));
+  gestureBtn.addEventListener('click', () => post('GESTURE'));
 
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.origin !== location.origin) return;
     const data = event.data;
     if (!data || data.type !== BRIDGE) return;
+    if (data.action === 'GESTURE_FRAME' && Number.isInteger(data.id) && typeof data.image === 'string') {
+      chrome.runtime.sendMessage({ type: 'MEETELEPORT_GESTURE_FRAME', image: data.image }).then((result) => {
+        post('GESTURE_RESULT', {
+          id: data.id,
+          ok: result?.ok !== false,
+          skipped: result?.skipped === true,
+          gesture: result?.gesture === true,
+          hand: result?.hand === true,
+          face: result?.face === true,
+        });
+      }).catch(() => post('GESTURE_RESULT', { id: data.id, ok: false, gesture: false }));
+      return;
+    }
     if (data.action === 'READY') sendStoredRoom();
     if (data.action === 'ROOM_SAVED' && typeof data.image === 'string' &&
         data.image.startsWith('data:image/jpeg') && data.image.length <= 2_000_000) {
@@ -135,14 +155,22 @@
     const error = root?.dataset.meeteleportError || '';
     const vanished = root?.dataset.meeteleportVanished === '1';
     const hasRoom = root?.dataset.meeteleportRoom === '1';
+    const charge = Number(root?.dataset.meeteleportCharge || 0);
+    const gestureOn = root?.dataset.meeteleportGesture !== '0';
     toggleBtn.disabled = !hasRoom;
     toggleBtn.textContent = vanished ? 'Volver' : 'Desaparecer';
+    gestureBtn.classList.toggle('on', gestureOn);
     const now = performance.now();
     const dt = (now - lastTime) / 1000;
     const fps = dt > 0 ? Math.round((frames - lastFrames) / dt) : 0;
     lastFrames = frames;
     lastTime = now;
 
+    if (charge > 15) {
+      dot.className = 'dot warn';
+      label.textContent = 'Teleport · dos dedos en la frente';
+      return;
+    }
     if (countdown > 0) {
       dot.className = 'dot warn';
       label.textContent = `Sal del cuadro · ${countdown}`;
