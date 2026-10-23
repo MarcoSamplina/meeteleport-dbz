@@ -68,6 +68,36 @@
     return pixel && pixel[0] < 80 && pixel[1] > 200 && pixel[2] > 200;
   }
 
+  function sampleGrid() {
+    const width = preview.videoWidth;
+    const height = preview.videoHeight;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(preview, 0, 0);
+    const points = [];
+    for (let y = 0.15; y <= 0.85; y += 0.14) {
+      for (let x = 0.15; x <= 0.85; x += 0.14) {
+        const pixel = ctx.getImageData(
+          Math.min(width - 1, Math.floor(x * width)),
+          Math.min(height - 1, Math.floor(y * height)),
+          1,
+          1,
+        ).data;
+        points.push(pixel[0], pixel[1], pixel[2]);
+      }
+    }
+    return points;
+  }
+
+  function diffSamples(left, right) {
+    let total = 0;
+    const count = Math.min(left.length, right.length);
+    for (let i = 0; i < count; i += 1) total += Math.abs(left[i] - right[i]);
+    return total;
+  }
+
   async function openCamera(audio) {
     return navigator.mediaDevices.getUserMedia({
       video: { width: 640, height: 480 },
@@ -102,6 +132,7 @@
     const hook = addCheck('La extensión está enganchada');
     const audioOnly = addCheck('Un audio solo no abre el tubo');
     const direct = addCheck('El vídeo pasa por el tubo directo');
+    const room = addCheck('La foto de la habitación sustituye a la cámara');
     const release = addCheck('Al cortar la pista se suelta la cámara');
     const marker = addCheck('La marca cian sale en el banco de pruebas');
     const pill = addCheck('La pastilla ve el tubo');
@@ -157,6 +188,24 @@
       audio: withAudio,
     };
     caption.textContent = 'Tubo directo: la imagen va sin marca.';
+
+    if (api.setVanished(true) !== false) throw new Error('desapareció sin tener foto de la habitación');
+    const shot = await api.captureRoom();
+    if (!shot?.width || !api.hasRoom) throw new Error('no se guardó la habitación');
+    if (api.setVanished(true) !== true) throw new Error('no se pudo salir de cuadro');
+    await wait(400);
+    const frozenA = sampleGrid();
+    await wait(500);
+    const frozenB = sampleGrid();
+    const frozen = diffSamples(frozenA, frozenB);
+    api.setVanished(false);
+    await wait(700);
+    const live = diffSamples(frozenB, sampleGrid());
+    if (frozen > 40) throw new Error(`la habitación congelada se movió (${frozen})`);
+    if (live < 80) throw new Error(`al volver, el vídeo no cambió (${live})`);
+    room.pass(`quieta ${frozen}, en vivo ${live}`);
+    report.room = { width: shot.width, height: shot.height, frozen, live };
+    caption.textContent = 'La foto quieta sustituye a la cámara. Al volver, la imagen se mueve otra vez.';
 
     await releaseVideo(stream);
     preview.srcObject = null;

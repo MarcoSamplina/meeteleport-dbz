@@ -2,11 +2,13 @@
 
 Extensión de Chrome para desaparecer de Google Meet con el gesto de la Transmisión Instantánea. Todo el vídeo se procesa en el navegador.
 
-## Fase 1: el tubo
+## Qué hace ahora
 
-Meet no recibe la cámara a pelo. La extensión envuelve `getUserMedia` y le entrega otra pista de vídeo. En reposo los frames se reenvían sin redibujarlos. Todavía no hay gesto ni fogonazo: quien esté en la llamada te ve igual que siempre.
+Meet no recibe la cámara a pelo. La extensión envuelve `getUserMedia` y le entrega otra pista de vídeo. Mientras estás en cuadro, los frames se reenvían sin redibujarlos.
 
-Una pastilla arriba a la derecha, visible solo para ti, dice si la cámara está en el tubo y a cuántos fps.
+Con la cámara encendida, pulsa **Habitación** en la pastilla, sal del cuadro durante la cuenta atrás y vuelve. **Desaparecer** —o `Alt+Shift+V`— muestra esa foto. **Volver** te devuelve. La foto se queda en el almacenamiento local del navegador.
+
+La idea de la habitación vacía sale de [deniza-png/snap](https://github.com/deniza-png/snap) (Meet Vanish). Ese repositorio no tiene licencia para su código propio, así que no está copiado aquí. Su gesto es una V y su efecto es polvo; aquí el disparo será dos dedos en la frente y el efecto, el fogonazo.
 
 ## Probarla
 
@@ -27,4 +29,4 @@ En una llamada, deja apagados el desenfoque y los fondos de Meet.
 
 ## Qué no hace todavía
 
-No detecta los dos dedos en la frente, no guarda la habitación vacía y no teletransporta. Eso es lo que sigue.
+No detecta los dos dedos en la frente ni dibuja el fogonazo. Desaparecer, por ahora, es un corte a la foto.

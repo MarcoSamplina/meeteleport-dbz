@@ -1,9 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Meet Teleport",
-  "version": "0.1.0",
-  "description": "Pasa tu cámara por la extensión antes de que llegue a Google Meet. En esta fase la imagen se reenvía tal cual.",
+  "version": "0.2.0",
+  "description": "Sustituye tu cámara en Google Meet por una foto de la habitación vacía.",
   "minimum_chrome_version": "114",
+  "permissions": ["storage"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "commands": {
+    "toggle-vanish": {
+      "suggested_key": {
+        "default": "Alt+Shift+V"
+      },
+      "description": "Entrar o salir de la habitación vacía"
+    }
+  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

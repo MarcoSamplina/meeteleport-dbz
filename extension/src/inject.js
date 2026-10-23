@@ -12,7 +12,13 @@
     logs: [],
     marker: false,
   };
+  const roomState = {
+    bitmap: null,
+    vanished: false,
+    pending: null,
+  };
   let hooked = false;
+  const BRIDGE = 'MEETELEPORT_V1';
 
   function message(err) {
     if (!err) return 'error desconocido';
@@ -51,6 +57,8 @@
     root.dataset.meeteleportMode = state.mode;
     root.dataset.meeteleportPipes = String(state.activePipes);
     root.dataset.meeteleportError = state.lastError;
+    root.dataset.meeteleportVanished = roomState.vanished ? '1' : '0';
+    root.dataset.meeteleportRoom = roomState.bitmap ? '1' : '0';
   }
 
   function publishApi() {
@@ -58,7 +66,7 @@
     const api = {};
     Object.defineProperties(api, {
       installed: { value: true },
-      version: { value: '0.1.0' },
+      version: { value: '0.2.0' },
       supportsInsertable: { get: supportsInsertable },
       frames: { get: () => state.frames },
       mode: { get: () => state.mode },
@@ -67,7 +75,12 @@
       lastError: { get: () => state.lastError },
       logs: { get: () => state.logs.slice() },
       marker: { get: () => state.marker },
+      vanished: { get: () => roomState.vanished },
+      hasRoom: { get: () => Boolean(roomState.bitmap) },
       setMarker: { value: setMarker },
+      captureRoom: { value: captureRoom },
+      setVanished: { value: setVanished },
+      toggleVanished: { value: toggleVanished },
     });
     window.__meeteleport = Object.freeze(api);
   }
@@ -124,6 +137,122 @@
     });
   }
 
+  function adoptRoom(bitmap) {
+    if (roomState.bitmap && roomState.bitmap !== bitmap) {
+      try { roomState.bitmap.close(); } catch { /* ya cerrado */ }
+    }
+    roomState.bitmap = bitmap;
+    publish();
+  }
+
+  function captureRoom() {
+    if (state.activePipes < 1) return Promise.reject(new Error('no hay cámara en el tubo'));
+    if (roomState.pending) return roomState.pending.promise;
+    let finish = null;
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (roomState.pending?.finish !== finish) return;
+        roomState.pending = null;
+        reject(new Error('no llegó un frame para la habitación'));
+      }, 2000);
+      finish = (err, info) => {
+        clearTimeout(timer);
+        if (roomState.pending?.finish === finish) roomState.pending = null;
+        if (err) reject(err);
+        else resolve(info);
+      };
+    });
+    roomState.pending = { finish, promise };
+    return promise;
+  }
+
+  function setVanished(on) {
+    const next = Boolean(on);
+    if (next && !roomState.bitmap) return false;
+    roomState.vanished = next;
+    log(next ? 'fuera de cuadro' : 'de vuelta en cuadro');
+    publish();
+    return roomState.vanished;
+  }
+
+  function toggleVanished() {
+    return setVanished(!roomState.vanished);
+  }
+
+  const paint = document.createElement('canvas');
+  const paintCtx = paint.getContext('2d', { alpha: false });
+
+  function paintRoom(timestamp, width, height) {
+    if (!paintCtx || !roomState.bitmap) throw new Error('sin habitación');
+    if (paint.width !== width || paint.height !== height) {
+      paint.width = width;
+      paint.height = height;
+    }
+    paintCtx.drawImage(roomState.bitmap, 0, 0, width, height);
+    const stamped = Math.round(timestamp);
+    try {
+      return new VideoFrame(paint, { timestamp: stamped, alpha: 'discard' });
+    } catch {
+      return new VideoFrame(paint, { timestamp: stamped });
+    }
+  }
+
+  async function bitmapFromSource(source) {
+    try {
+      return await createImageBitmap(source);
+    } catch {
+      const copy = document.createElement('canvas');
+      const width = source.displayWidth || source.videoWidth || source.width;
+      const height = source.displayHeight || source.videoHeight || source.height;
+      copy.width = width;
+      copy.height = height;
+      copy.getContext('2d').drawImage(source, 0, 0, width, height);
+      return createImageBitmap(copy);
+    }
+  }
+
+  function rememberRoom() {
+    if (!roomState.bitmap || !paintCtx) return;
+    if (paint.width !== roomState.bitmap.width || paint.height !== roomState.bitmap.height) {
+      paint.width = roomState.bitmap.width;
+      paint.height = roomState.bitmap.height;
+    }
+    paintCtx.drawImage(roomState.bitmap, 0, 0);
+    const image = paint.toDataURL('image/jpeg', 0.72);
+    window.postMessage({ type: BRIDGE, action: 'ROOM_SAVED', image }, location.origin);
+  }
+
+  async function takePendingRoom(source) {
+    const pending = roomState.pending;
+    if (!pending) return;
+    roomState.pending = null;
+    const sample = source.clone ? source.clone() : source;
+    try {
+      const bitmap = await bitmapFromSource(sample);
+      adoptRoom(bitmap);
+      pending.finish(null, { width: bitmap.width, height: bitmap.height });
+      rememberRoom();
+    } catch (err) {
+      pending.finish(err);
+    } finally {
+      if (sample !== source) {
+        try { sample.close(); } catch { /* el clon ya se cerró */ }
+      }
+    }
+  }
+
+  function loadRoomImage(image) {
+    if (typeof image !== 'string' || !image.startsWith('data:image/jpeg')) return;
+    const img = new Image();
+    img.onload = () => {
+      createImageBitmap(img).then(adoptRoom).catch((err) => {
+        state.lastError = message(err);
+        publish();
+      });
+    };
+    img.src = image;
+  }
+
   function pipeInsertable(track) {
     const processor = new MediaStreamTrackProcessor({ track });
     const generator = new MediaStreamTrackGenerator({ kind: 'video' });
@@ -150,6 +279,29 @@
             break;
           }
           try {
+            await takePendingRoom(value);
+            if (!running || generator.readyState !== 'live') {
+              value.close();
+              break;
+            }
+            if (roomState.vanished && roomState.bitmap) {
+              let stamped = null;
+              try {
+                const width = value.displayWidth || value.codedWidth;
+                const height = value.displayHeight || value.codedHeight;
+                const timestamp = Number.isFinite(value.timestamp) ? value.timestamp : performance.now() * 1000;
+                stamped = paintRoom(timestamp, width, height);
+              } catch (err) {
+                state.lastError = message(err);
+                log('no pude pintar la habitación: ' + state.lastError);
+              }
+              if (stamped) {
+                value.close();
+                await writer.write(stamped);
+                state.frames += 1;
+                continue;
+              }
+            }
             await writer.write(value);
           } catch (err) {
             try { value.close(); } catch { /* el frame ya se consumió */ }
@@ -219,10 +371,23 @@
         canvas.width = width;
         canvas.height = height;
       }
-      ctx.drawImage(video, 0, 0, width, height);
-      if (state.marker) {
-        ctx.fillStyle = '#00ffff';
-        ctx.fillRect(0, 0, 24, 24);
+      if (roomState.pending) {
+        const pending = roomState.pending;
+        roomState.pending = null;
+        createImageBitmap(video).then((bitmap) => {
+          adoptRoom(bitmap);
+          pending.finish(null, { width: bitmap.width, height: bitmap.height });
+          rememberRoom();
+        }).catch((err) => pending.finish(err));
+      }
+      if (roomState.vanished && roomState.bitmap) {
+        ctx.drawImage(roomState.bitmap, 0, 0, width, height);
+      } else {
+        ctx.drawImage(video, 0, 0, width, height);
+        if (state.marker) {
+          ctx.fillStyle = '#00ffff';
+          ctx.fillRect(0, 0, 24, 24);
+        }
       }
       state.frames += 1;
     }
@@ -287,6 +452,7 @@
     if (Ctor.prototype.getUserMedia.__meeteleport) {
       hooked = true;
       publish();
+      window.postMessage({ type: BRIDGE, action: 'READY' }, location.origin);
       return true;
     }
 
@@ -305,6 +471,7 @@
     hooked = true;
     log('tubo listo');
     publish();
+    window.postMessage({ type: BRIDGE, action: 'READY' }, location.origin);
     return true;
   }
 
@@ -315,6 +482,23 @@
       if (install() || Date.now() - started > 10000) clearInterval(timer);
     }, 20);
   }
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || event.origin !== location.origin) return;
+    const data = event.data;
+    if (!data || data.type !== BRIDGE) return;
+    if (data.action === 'CAPTURE') {
+      captureRoom().catch((err) => {
+        state.lastError = message(err);
+        log(state.lastError);
+        publish();
+      });
+    } else if (data.action === 'TOGGLE') {
+      toggleVanished();
+    } else if (data.action === 'ROOM_LOAD') {
+      loadRoomImage(data.image);
+    }
+  });
 
   boot();
   setInterval(publish, 250);
