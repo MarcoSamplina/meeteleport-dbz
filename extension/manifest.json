@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meet Teleport",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Desaparece de Google Meet con dos dedos en la frente. La llamada ve tu habitación vacía.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "offscreen"],

@@ -11,7 +11,7 @@
     lastError: '',
     logs: [],
     marker: false,
-    flashUntil: 0,
+    effect: null,
   };
   const gesture = {
     enabled: true,
@@ -80,7 +80,7 @@
     const api = {};
     Object.defineProperties(api, {
       installed: { value: true },
-      version: { value: '0.3.0' },
+      version: { value: '0.3.1' },
       supportsInsertable: { get: supportsInsertable },
       frames: { get: () => state.frames },
       mode: { get: () => state.mode },
@@ -191,7 +191,14 @@
   }
 
   function toggleVanished() {
-    return setVanished(!roomState.vanished);
+    if (!roomState.bitmap || state.effect) return roomState.vanished;
+    state.effect = {
+      to: !roomState.vanished,
+      start: performance.now(),
+      switched: false,
+    };
+    publish();
+    return roomState.vanished;
   }
 
   const paint = document.createElement('canvas');
@@ -283,33 +290,57 @@
   }
 
   function teleport() {
-    if (!roomState.bitmap) return false;
-    state.flashUntil = performance.now() + 320;
-    const gone = toggleVanished();
-    log(gone ? 'teletransporte' : 'de vuelta');
-    publish();
-    return true;
+    const before = roomState.vanished;
+    toggleVanished();
+    return state.effect !== null || roomState.vanished !== before;
   }
 
-  function flashStrength() {
-    if (!state.flashUntil) return 0;
-    const left = state.flashUntil - performance.now();
-    if (left <= 0) {
-      state.flashUntil = 0;
-      return 0;
+  // El corte del anime: sube a blanco, cambia el cuadro en el pico y el blanco cae.
+  function tickEffect() {
+    const effect = state.effect;
+    if (!effect) return -1;
+    const t = performance.now() - effect.start;
+    if (t >= 140 && !effect.switched) {
+      effect.switched = true;
+      roomState.vanished = effect.to;
+      log(effect.to ? 'fuera de cuadro' : 'de vuelta en cuadro');
+      publish();
     }
-    return Math.sin((1 - left / 320) * Math.PI) * 0.72;
+    if (t >= 380) {
+      state.effect = null;
+      publish();
+      return -1;
+    }
+    return t;
   }
 
-  function drawFlash(ctx, width, height) {
-    const alpha = flashStrength();
-    if (alpha <= 0) return;
-    const glow = ctx.createRadialGradient(width / 2, height * 0.28, 8, width / 2, height * 0.34, width * 0.58);
-    glow.addColorStop(0, `rgba(255,255,255,${alpha})`);
-    glow.addColorStop(0.4, `rgba(125,240,255,${alpha * 0.8})`);
-    glow.addColorStop(1, 'rgba(125,240,255,0)');
-    ctx.fillStyle = glow;
+  function drawTeleport(ctx, width, height, t) {
+    if (t < 0) return;
+    const rise = t < 140;
+    const alpha = rise
+      ? Math.pow(t / 140, 1.35) * 0.97
+      : Math.max(0, 1 - (t - 140) / 180) * 0.97;
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
     ctx.fillRect(0, 0, width, height);
+    const life = Math.max(0, 1 - t / 340);
+    const radius = width * (0.05 + Math.min(1, t / 300) * 0.7);
+    ctx.beginPath();
+    ctx.arc(width / 2, height * 0.34, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(186, 246, 255, ${0.9 * life})`;
+    ctx.lineWidth = Math.max(2, width * 0.014 * (0.4 + life));
+    ctx.stroke();
+    if (t > 70 && t < 230) {
+      const streak = 1 - Math.abs(t - 140) / 90;
+      ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, streak) * 0.7})`;
+      ctx.lineWidth = Math.max(1, height * 0.008);
+      const y = height * 0.34;
+      ctx.beginPath();
+      ctx.moveTo(width * 0.08, y);
+      ctx.lineTo(width * 0.92, y);
+      ctx.moveTo(width * 0.18, y - height * 0.06);
+      ctx.lineTo(width * 0.82, y - height * 0.06);
+      ctx.stroke();
+    }
   }
 
   const sampleCanvas = document.createElement('canvas');
@@ -380,7 +411,7 @@
     if (update.triggered) teleport();
   }
 
-  function outgoingFrame(source, timestamp, width, height) {
+  function outgoingFrame(source, timestamp, width, height, effectT) {
     if (!paintCtx) throw new Error('sin lienzo');
     if (paint.width !== width || paint.height !== height) {
       paint.width = width;
@@ -388,7 +419,7 @@
     }
     if (source === 'room') paintCtx.drawImage(roomState.bitmap, 0, 0, width, height);
     else paintCtx.drawImage(source, 0, 0, width, height);
-    drawFlash(paintCtx, width, height);
+    drawTeleport(paintCtx, width, height, effectT);
     const stamped = Math.round(timestamp);
     try {
       return new VideoFrame(paint, { timestamp: stamped, alpha: 'discard' });
@@ -432,11 +463,11 @@
             const width = value.displayWidth || value.codedWidth;
             const height = value.displayHeight || value.codedHeight;
             const timestamp = Number.isFinite(value.timestamp) ? value.timestamp : performance.now() * 1000;
-            const flash = flashStrength();
-            if ((roomState.vanished && roomState.bitmap) || flash > 0) {
+            const effectT = tickEffect();
+            if ((roomState.vanished && roomState.bitmap) || effectT >= 0) {
               let stamped = null;
               try {
-                stamped = outgoingFrame(roomState.vanished && roomState.bitmap ? 'room' : value, timestamp, width, height);
+                stamped = outgoingFrame(roomState.vanished && roomState.bitmap ? 'room' : value, timestamp, width, height, effectT);
               } catch (err) {
                 state.lastError = message(err);
                 log('no pude componer el frame: ' + state.lastError);
@@ -536,7 +567,7 @@
           ctx.fillRect(0, 0, 24, 24);
         }
       }
-      drawFlash(ctx, width, height);
+      drawTeleport(ctx, width, height, tickEffect());
       state.frames += 1;
     }
 
